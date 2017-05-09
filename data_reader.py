@@ -59,7 +59,7 @@ def load_config(file):
 class CollectorThread(Thread):
 
     _count = itertools.count()
-    _data_pattern = re.compile(rb'\s*(-?\d+\.\d+) g')
+    _data_pattern = re.compile(rb'\s*(-?\d+\.\d+)')
 
     def __init__(self, conn, interval=0.5):
         super().__init__(name=self.generate_name())
@@ -99,7 +99,7 @@ class CollectorThread(Thread):
                 current_time = time.time()
                 if last_time + self._interval <= current_time:
                     last_time += (
-                        ((current_time - last_time) // self._interval + 1)
+                        ((current_time - last_time) // self._interval)
                         * self._interval
                     )
                     self._data[self._len] = self._last_value
@@ -134,7 +134,7 @@ class CollectorThread(Thread):
         return self._len
 
     def is_running(self):
-        return self._running_evt.is_set()
+        return self._running_evt.is_set() and not self._break_evt.is_set()
 
     @classmethod
     def generate_name(cls):
@@ -145,7 +145,7 @@ class DataAcquisition:
 
     def __init__(self):
         self._serial = serial.Serial(**load_config('./config.cfg'))
-        self._collector_thread = None
+        self._collector_thread = None  # type: CollectorThread
         self._restart_lock = Lock()
 
     def start(self):
@@ -171,25 +171,58 @@ class DataAcquisition:
         """
         Stops current data collection and dispose the thread.
         """
-        self._collector_thread.interrupt()
-        self._collector_thread.join()
-        self._collector_thread = None
+        if self._collector_thread:
+            self._collector_thread.interrupt()
+            self._collector_thread.join()
+            self._collector_thread = None
 
-    def close(self):
+    def close_port(self):
         """
         Close currently opened serial port.
         """
         self._serial.close()
 
-    def __getattr__(self, item):
-        """
-        Gives easy access to the selected elements of the collector thread.
-        """
-        if item in {'pause', 'resume', 'get_mean', 'get_std',
-                    'last_value', 'data', 'len'}:
-            if self._collector_thread is None:
-                raise DataCollectionNotRunningException
-            else:
-                return getattr(self._collector_thread, item)
-        raise AttributeError("'%s' object has no attribute '%s'" %
-                             (self.__class__.__name__, item))
+    def pause(self):
+        if self._collector_thread is None:
+            raise DataCollectionNotRunningException
+        self._collector_thread.pause()
+
+    stop = pause
+
+    dispose = reset
+
+    def resume(self):
+        if self._collector_thread is None:
+            raise DataCollectionNotRunningException
+        self._collector_thread.resume()
+
+    def get_mean(self):
+        if self._collector_thread is None:
+            raise DataCollectionNotRunningException
+        return self._collector_thread.get_mean()
+
+    def get_std(self):
+        if self._collector_thread is None:
+            raise DataCollectionNotRunningException
+        return self._collector_thread.get_std()
+
+    @property
+    def last_value(self):
+        if self._collector_thread is None:
+            raise DataCollectionNotRunningException
+        return self._collector_thread.last_value
+
+    @property
+    def data(self):
+        if self._collector_thread is None:
+            raise DataCollectionNotRunningException
+        return self._collector_thread.data
+
+    @property
+    def len(self):
+        if self._collector_thread is None:
+            raise DataCollectionNotRunningException
+        return self._collector_thread.len
+
+    def is_running(self):
+        return self._collector_thread and self._collector_thread.is_running()
